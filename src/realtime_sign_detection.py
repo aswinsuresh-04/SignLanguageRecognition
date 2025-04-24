@@ -1,0 +1,226 @@
+import cv2
+import numpy as np
+import mediapipe as mp
+import torch
+import pyttsx3
+from collections import deque
+import os
+import joblib
+from threading import Thread
+import logging
+from tqdm import tqdm
+
+# Configure logging
+logging.basicConfig(filename='sign_detection.log', level=logging.INFO, 
+                    format='%(asctime)s - %(message)s')
+
+class SignClassifier(torch.nn.Module):
+    def __init__(self, num_classes=29):
+        super().__init__()
+        self.model = torch.nn.Sequential(
+            torch.nn.Linear(63, 512),
+            torch.nn.BatchNorm1d(512),
+            torch.nn.ReLU(),
+            torch.nn.Dropout(0.2),
+            torch.nn.Linear(512, 256),
+            torch.nn.BatchNorm1d(256),
+            torch.nn.ReLU(),
+            torch.nn.Dropout(0.2),
+            torch.nn.Linear(256, 128),
+            torch.nn.BatchNorm1d(128),
+            torch.nn.ReLU(),
+            torch.nn.Dropout(0.2),
+            torch.nn.Linear(128, 64),
+            torch.nn.ReLU(),
+            torch.nn.Linear(64, num_classes)
+        )
+    
+    def forward(self, x):
+        return self.model(x)
+
+def initialize_tts():
+    engine = pyttsx3.init()
+    engine.setProperty('rate', 150)
+    engine.setProperty('volume', 0.8)
+    return engine
+
+def speak_async(text, engine):
+    engine.say(text)
+    engine.runAndWait()
+
+def main():
+    # Paths to model, scaler, and label encoder
+    save_path = r"D:\Study\Project\SignLAnguage\torch_data"
+    model_path = os.path.join(save_path, 'sign_model.pt')
+    label_encoder_path = os.path.join(save_path, 'label_encoder.pt')
+    scaler_path = os.path.join(save_path, 'scaler.pkl')
+
+    # Check if files exist
+    if not all(os.path.exists(p) for p in [model_path, label_encoder_path, scaler_path]):
+        print(f"Error: One or more required files missing: {model_path}, {label_encoder_path}, {scaler_path}")
+        return
+
+    # Initialize model
+    device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+    model = SignClassifier(num_classes=29).to(device)
+    model.load_state_dict(torch.load(model_path, weights_only=True, map_location=device))
+    model.eval()
+
+    # Load scaler and label encoder
+    label_encoder = torch.load(label_encoder_path, weights_only=False)
+    scaler = joblib.load(scaler_path)
+
+    # Initialize MediaPipe Hands
+    mp_hands = mp.solutions.hands
+    hands = mp_hands.Hands(
+        static_image_mode=False,
+        max_num_hands=1,
+        min_detection_confidence=0.1,  # Kept low for M, N detection
+        min_tracking_confidence=0.5
+    )
+
+    # Initialize TTS
+    tts_engine = initialize_tts()
+
+    # Initialize webcam
+    cap = cv2.VideoCapture(0)
+    if not cap.isOpened():
+        print("Error: Could not open webcam.")
+        return
+
+    # Initialize variables for sign detection and word formation
+    sign_queue = deque(maxlen=45)  # Increased for slower detection (~1.5s at 30 FPS)
+    word_buffer = []
+    sentence = []
+    last_sign = None
+    last_spoken = None
+    sign_duration = 0
+    prob_threshold = 0.6  # Balanced for accuracy and sensitivity
+    frame_count = 0
+    last_displayed_text = {"sign": "None", "text": "", "prob": 0.0}  # Buffer to persist text
+    skip_frames = 1  # Process every frame; set to 2 for CPU performance
+
+    # Main loop with tqdm progress bar
+    with tqdm(desc="Processing Frames", unit="frame") as pbar:
+        while True:
+            ret, frame = cap.read()
+            if not ret:
+                print("Error: Failed to capture frame.")
+                break
+
+            frame_count += 1
+
+            # Optional frame skip to reduce processing load
+            if skip_frames > 1 and frame_count % skip_frames != 0:
+                cv2.putText(frame, f"Sign: {last_displayed_text['sign']}", (10, 30), 
+                           cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 255, 0), 2)
+                cv2.putText(frame, f"Text: {last_displayed_text['text']}", (10, 60), 
+                           cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 255, 0), 2)
+                cv2.putText(frame, f"Prob: {last_displayed_text['prob']:.4f}", (10, 90), 
+                           cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 255, 0), 2)
+                cv2.imshow('Sign Language Detection', frame)
+                pbar.update(1)
+                if cv2.waitKey(1) & 0xFF == ord('q'):
+                    break
+                continue
+
+            # Process frame for hand detection
+            frame_rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+            hand_results = hands.process(frame_rgb)
+
+            sign_label = "None"
+            max_prob = torch.tensor(0.0)
+            raw_pred = -1
+            hands_detected = bool(hand_results.multi_hand_landmarks)
+            if hands_detected:
+                hand = hand_results.multi_hand_landmarks[0]
+                landmarks = []
+                for lm in hand.landmark:
+                    landmarks.extend([lm.x, lm.y, lm.z])
+                landmarks = scaler.transform([landmarks])[0]
+                x_tensor = torch.tensor([landmarks], dtype=torch.float32).to(device)
+                with torch.no_grad():
+                    outputs = model(x_tensor)
+                    probs = torch.softmax(outputs, dim=1)
+                    max_prob, predicted = torch.max(probs, 1)
+                    raw_pred = predicted.item()
+                    if max_prob.item() > prob_threshold:
+                        sign_label = label_encoder.inverse_transform([predicted.item()])[0]
+            else:
+                # Handle no-hand case (e.g., for 'nothing')
+                landmarks = np.zeros(63)
+                landmarks = scaler.transform([landmarks])[0]
+                x_tensor = torch.tensor([landmarks], dtype=torch.float32).to(device)
+                with torch.no_grad():
+                    outputs = model(x_tensor)
+                    probs = torch.softmax(outputs, dim=1)
+                    max_prob, predicted = torch.max(probs, 1)
+                    raw_pred = predicted.item()
+                    if max_prob.item() > prob_threshold:
+                        sign_label = label_encoder.inverse_transform([predicted.item()])[0]
+
+            # Smooth predictions using a queue
+            sign_queue.append(sign_label)
+            sign_label = max(set(sign_queue), key=sign_queue.count)
+
+            # Word and sentence formation logic
+            if sign_label != "None" and sign_label != last_sign:
+                if sign_label == "space":
+                    if word_buffer:
+                        sentence.append("".join(word_buffer))
+                        word_buffer = []
+                elif sign_label == "delete":
+                    if word_buffer:
+                        word_buffer.pop()
+                elif sign_label == "nothing":
+                    pass
+                else:
+                    word_buffer.append(sign_label)
+                last_sign = sign_label
+                sign_duration = 1
+            elif sign_label == last_sign:
+                sign_duration += 1
+                if sign_duration > 45:  # Increased for longer hold (~1.5s at 30 FPS)
+                    last_sign = None
+
+            # Update current text
+            current_text = " ".join(sentence + ["".join(word_buffer)]).strip()
+
+            # Update text buffer for display
+            last_displayed_text = {
+                "sign": sign_label,
+                "text": current_text,
+                "prob": max_prob.item()
+            }
+
+            # Display on frame (always draw text to avoid blinking)
+            cv2.putText(frame, f"Sign: {last_displayed_text['sign']}", (10, 30), 
+                       cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 255, 0), 2)
+            cv2.putText(frame, f"Text: {last_displayed_text['text']}", (10, 60), 
+                       cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 255, 0), 2)
+            cv2.putText(frame, f"Prob: {last_displayed_text['prob']:.4f}", (10, 90), 
+                       cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 255, 0), 2)
+
+            # Log detection and rendering details
+            logging.info(f"Frame: {frame_count}, HandsDetected: {hands_detected}, RawPred: {raw_pred}, Sign: {sign_label}, Queue: {list(sign_queue)}, Text: {current_text}, Prob: {max_prob.item():.4f}, Displayed: {last_displayed_text['sign']}")
+
+            # Speak the sentence when complete
+            if sentence and not word_buffer and current_text != last_spoken:
+                Thread(target=speak_async, args=(current_text, tts_engine)).start()
+                last_spoken = current_text
+
+            # Show frame
+            cv2.imshow('Sign Language Detection', frame)
+            pbar.update(1)
+
+            # Exit on 'q'
+            if cv2.waitKey(1) & 0xFF == ord('q'):
+                break
+
+    # Cleanup
+    cap.release()
+    cv2.destroyAllWindows()
+    hands.close()
+
+if __name__ == "__main__":
+    main()
