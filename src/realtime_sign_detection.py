@@ -108,6 +108,8 @@ def main():
     stable_sign_count = 0
     current_sign = None
     skip_frames = 1
+    space_count = 0  # Track consecutive spaces
+    last_space_frame = None  # Track the last frame with 'space'
 
     # Main loop with tqdm progress bar
     with tqdm(desc="Processing Frames", unit="frame") as pbar:
@@ -127,6 +129,8 @@ def main():
                            cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 255, 0), 2)
                 cv2.putText(frame, f"Prob: {last_displayed_text['prob']:.4f}", (10, 90), 
                            cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 255, 0), 2)
+                cv2.putText(frame, f"Space: {space_count}", (10, 120), 
+                           cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 255, 255), 2)  # Visual feedback
                 cv2.imshow('Sign Language Detection', frame)
                 pbar.update(1)
                 if cv2.waitKey(1) & 0xFF == ord('q'):
@@ -189,26 +193,58 @@ def main():
                     if word_buffer:
                         sentence.append("".join(word_buffer))
                         word_buffer = []
+                    # Check for double space
+                    if last_space_frame and (frame_count - last_space_frame <= 90):  # Extended to 90 frames (~3s)
+                        space_count += 1
+                    else:
+                        space_count = 1
+                    last_space_frame = frame_count
+
+                    if space_count == 1:  # Single space
+                        sentence.append(" ")  # Add space to separate words
+                    elif space_count == 2:  # Double space
+                        # Trigger TTS for the full sentence
+                        speak_text = " ".join(sentence).strip()
+                        if speak_text and speak_text != last_spoken:
+                            Thread(target=speak_async, args=(speak_text, tts_engine)).start()
+                            last_spoken = speak_text
+                        sentence.append(".")  # Add sentence-ending full stop
+                        # Reset for a new sentence
+                        sentence = []
+                        word_buffer = []
+                        space_count = 0
                     last_action = "space"
+
                 elif sign_label == "delete":
                     if word_buffer:
                         word_buffer.pop()  # Delete one letter from word_buffer
                     elif sentence and last_action == "space":  # Undo space by moving last word back as letters
-                        if sentence:
-                            last_word = sentence.pop()
-                            word_buffer = list(last_word)  # Split into individual letters
+                        if sentence and sentence[-1] == " ":
+                            sentence.pop()  # Remove the space
+                            if len(sentence) > 0:
+                                last_word = sentence.pop()
+                                word_buffer = list(last_word)  # Split into individual letters
                             last_action = None
+                        elif sentence and sentence[-1] == ".":
+                            sentence.pop()  # Remove the sentence-ending full stop
                     elif sentence:  # Delete one letter from the last word in sentence
                         last_word = sentence[-1]
-                        if len(last_word) > 1:
+                        if last_word == " " or last_word == ".":
+                            sentence.pop()  # Remove space or full stop
+                        elif len(last_word) > 1:
                             sentence[-1] = last_word[:-1]  # Remove last letter
                         else:
                             sentence.pop()  # Remove word if only one letter remains
                     last_action = "delete"
                 elif sign_label == "nothing":
-                    pass
+                    # Reset sentence on 'nothing'
+                    sentence = []
+                    word_buffer = []
+                    space_count = 0
+                    last_action = "nothing"
                 else:
                     word_buffer.append(sign_label)
+                    space_count = 0  # Reset space count on new letter
                     last_action = None
                 last_sign = sign_label
                 sign_duration = 1
@@ -218,12 +254,12 @@ def main():
                     last_sign = None
 
             # Update current text
-            current_text = " ".join(sentence + ["".join(word_buffer)]).strip()
+            current_text = "".join(sentence)  # Join with spaces and full stop
 
             # Update text buffer for display
             last_displayed_text = {
                 "sign": sign_label,
-                "text": current_text,
+                "text": current_text + "".join(word_buffer) if word_buffer else current_text,
                 "prob": max_prob.item()
             }
 
@@ -234,14 +270,8 @@ def main():
                        cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 255, 0), 2)
             cv2.putText(frame, f"Prob: {last_displayed_text['prob']:.4f}", (10, 90), 
                        cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 255, 0), 2)
-
-            # Log detection and rendering details
-            logging.info(f"Frame: {frame_count}, HandsDetected: {hands_detected}, RawPred: {raw_pred}, Sign: {sign_label}, Queue: {list(sign_queue)}, Text: {current_text}, Prob: {max_prob.item():.4f}, Displayed: {last_displayed_text['sign']}, Stable: {stable_sign_count}, LastAction: {last_action}")
-
-            # Speak the sentence when complete
-            if sentence and not word_buffer and current_text != last_spoken:
-                Thread(target=speak_async, args=(current_text, tts_engine)).start()
-                last_spoken = current_text
+            cv2.putText(frame, f"Space: {space_count}", (10, 120), 
+                       cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 255, 255), 2)  # Visual feedback
 
             # Show frame
             cv2.imshow('Sign Language Detection', frame)
