@@ -1,13 +1,15 @@
+# train_sign_model.py
 import torch
 import torch.nn as nn
 import torch.optim as optim
 from torch.utils.data import DataLoader, Dataset
-from sklearn.preprocessing import StandardScaler
+from sklearn.preprocessing import StandardScaler, LabelEncoder
+import pandas as pd
 import joblib
 from sklearn.metrics import accuracy_score
 import os
 import logging
-from tqdm import tqdm  # Added for progress bars
+from tqdm import tqdm
 
 logging.basicConfig(filename='training.log', level=logging.INFO)
 
@@ -20,7 +22,7 @@ class SignDataset(Dataset):
     def __len__(self):
         return len(self.x_data)
     def __getitem__(self, idx):
-        return torch.tensor(self.x_data[idx], dtype=torch.float32), self.y_data[idx]
+        return torch.tensor(self.x_data[idx], dtype=torch.float32), torch.tensor(self.y_data[idx], dtype=torch.long)
 
 class SignClassifier(nn.Module):
     def __init__(self, num_classes=29):
@@ -46,27 +48,40 @@ class SignClassifier(nn.Module):
         return self.model(x)
 
 def main():
-    save_path = r"D:\Study\Project\SignLAnguage\torch_data"
-    x_data_path = os.path.join(save_path, 'x_data_balanced.pt')
-    y_data_path = os.path.join(save_path, 'y_data_encoded.pt')
-    label_encoder_path = os.path.join(save_path, 'label_encoder.pt')
-
-    # Check if files exist
-    if not os.path.exists(x_data_path) or not os.path.exists(y_data_path) or not os.path.exists(label_encoder_path):
-        print(f"Error: One or more required files missing: {x_data_path}, {y_data_path}, {label_encoder_path}")
+    # Paths
+    data_path = r"D:\Study\Project\SignLanguageRecognition\data\combined_landmarks.csv"
+    save_path = r"D:\Study\Project\SignLanguageRecognition\torch_data"
+    
+    # Check if data file exists
+    if not os.path.exists(data_path):
+        print(f"Error: {data_path} not found.")
         return
 
-    x_data = torch.load(x_data_path, weights_only=False).numpy()
-    y_data = torch.load(y_data_path, weights_only=False)
-    label_encoder = torch.load(label_encoder_path, weights_only=False)
+    # Load data
+    data = pd.read_csv(data_path)
+    
+    # Features and labels
+    X = data.iloc[:, :-1].values  # All columns except the last (label)
+    y = data['label'].values
 
+    # Encode labels
+    label_encoder = LabelEncoder()
+    y_encoded = label_encoder.fit_transform(y)
+
+    # Save label encoder
+    label_encoder_path = os.path.join(save_path, 'label_encoder.pt')
+    torch.save(label_encoder, label_encoder_path)
+
+    # Split data
     from sklearn.model_selection import train_test_split
-    x_train, x_temp, y_train, y_temp = train_test_split(x_data, y_data, test_size=0.2, random_state=42)
+    x_train, x_temp, y_train, y_temp = train_test_split(X, y_encoded, test_size=0.2, random_state=42)
     x_val, x_test, y_val, y_test = train_test_split(x_temp, y_temp, test_size=0.5, random_state=42)
 
+    # Scale features
     scaler = StandardScaler().fit(x_train)
     joblib.dump(scaler, os.path.join(save_path, 'scaler.pkl'))
 
+    # Create datasets
     train_dataset = SignDataset(x_train, y_train, scaler)
     val_dataset = SignDataset(x_val, y_val, scaler)
     test_dataset = SignDataset(x_test, y_test, scaler)
@@ -74,6 +89,7 @@ def main():
     val_loader = DataLoader(val_dataset, batch_size=32)
     test_loader = DataLoader(test_dataset, batch_size=32)
 
+    # Initialize model
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
     model = SignClassifier(num_classes=29).to(device)
     criterion = nn.CrossEntropyLoss()
@@ -84,7 +100,6 @@ def main():
     for epoch in range(30):
         model.train()
         train_loss = 0
-        # Add tqdm progress bar for training
         train_bar = tqdm(train_loader, desc=f"Epoch {epoch+1} [Train]", unit="batch")
         for data, target in train_bar:
             data, target = data.to(device), target.to(device)
@@ -102,7 +117,6 @@ def main():
         val_loss = 0
         per_class_correct = {i: 0 for i in range(29)}
         per_class_total = {i: 0 for i in range(29)}
-        # Add tqdm progress bar for validation
         val_bar = tqdm(val_loader, desc=f"Epoch {epoch+1} [Val]", unit="batch")
         with torch.no_grad():
             for data, target in val_bar:
@@ -140,7 +154,6 @@ def main():
     total = 0
     per_class_correct = {i: 0 for i in range(29)}
     per_class_total = {i: 0 for i in range(29)}
-    # Add tqdm progress bar for testing
     test_bar = tqdm(test_loader, desc="Test", unit="batch")
     with torch.no_grad():
         for data, target in test_bar:

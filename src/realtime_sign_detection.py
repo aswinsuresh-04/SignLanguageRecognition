@@ -9,6 +9,7 @@ import joblib
 from threading import Thread
 import logging
 from tqdm import tqdm
+from sklearn.preprocessing import LabelEncoder
 
 # Configure logging
 logging.basicConfig(filename='sign_detection.log', level=logging.INFO, 
@@ -50,14 +51,13 @@ def speak_async(text, engine):
 
 def main():
     # Paths to model, scaler, and label encoder
-    save_path = r"D:\Study\Project\SignLAnguage\torch_data"
+    save_path = r"D:\Study\Project\SignLanguageRecognition\torch_data"
     model_path = os.path.join(save_path, 'sign_model.pt')
-    label_encoder_path = os.path.join(save_path, 'label_encoder.pt')
     scaler_path = os.path.join(save_path, 'scaler.pkl')
 
     # Check if files exist
-    if not all(os.path.exists(p) for p in [model_path, label_encoder_path, scaler_path]):
-        print(f"Error: One or more required files missing: {model_path}, {label_encoder_path}, {scaler_path}")
+    if not all(os.path.exists(p) for p in [model_path, scaler_path]):
+        print(f"Error: One or more required files missing: {model_path}, {scaler_path}")
         return
 
     # Initialize model
@@ -66,8 +66,13 @@ def main():
     model.load_state_dict(torch.load(model_path, weights_only=True, map_location=device))
     model.eval()
 
-    # Load scaler and label encoder
-    label_encoder = torch.load(label_encoder_path, weights_only=False)
+    # Manually recreate label encoder
+    labels = ['A', 'B', 'C', 'D', 'E', 'F', 'G', 'H', 'I', 'J', 'K', 'L', 'M', 'N', 'O', 'P', 
+              'Q', 'R', 'S', 'T', 'U', 'V', 'W', 'X', 'Y', 'Z', 'space', 'delete', 'nothing']
+    label_encoder = LabelEncoder()
+    label_encoder.fit(labels)
+
+    # Load scaler
     scaler = joblib.load(scaler_path)
 
     # Initialize MediaPipe Hands
@@ -89,16 +94,20 @@ def main():
         return
 
     # Initialize variables for sign detection and word formation
-    sign_queue = deque(maxlen=45)  # Increased for slower detection (~1.5s at 30 FPS)
-    word_buffer = []
-    sentence = []
+    sign_queue = deque(maxlen=30)  # Reduced to 30 frames (~1s at 30 FPS)
+    word_buffer = []  # List of individual letters
+    sentence = []     # List of words
     last_sign = None
     last_spoken = None
     sign_duration = 0
-    prob_threshold = 0.6  # Balanced for accuracy and sensitivity
+    last_action = None  # Track the last action (e.g., 'space')
+    prob_threshold = 0.75
     frame_count = 0
-    last_displayed_text = {"sign": "None", "text": "", "prob": 0.0}  # Buffer to persist text
-    skip_frames = 1  # Process every frame; set to 2 for CPU performance
+    last_displayed_text = {"sign": "None", "text": "", "prob": 0.0}
+    stability_threshold = 15  # Require 15 frames (~0.5s) for sign stability
+    stable_sign_count = 0
+    current_sign = None
+    skip_frames = 1
 
     # Main loop with tqdm progress bar
     with tqdm(desc="Processing Frames", unit="frame") as pbar:
@@ -146,8 +155,9 @@ def main():
                     raw_pred = predicted.item()
                     if max_prob.item() > prob_threshold:
                         sign_label = label_encoder.inverse_transform([predicted.item()])[0]
+                sign_queue.clear()  # Reset queue when hand is detected
             else:
-                # Handle no-hand case (e.g., for 'nothing')
+                # Handle no-hand case (default to "None" unless confident it's "nothing")
                 landmarks = np.zeros(63)
                 landmarks = scaler.transform([landmarks])[0]
                 x_tensor = torch.tensor([landmarks], dtype=torch.float32).to(device)
@@ -156,31 +166,55 @@ def main():
                     probs = torch.softmax(outputs, dim=1)
                     max_prob, predicted = torch.max(probs, 1)
                     raw_pred = predicted.item()
-                    if max_prob.item() > prob_threshold:
-                        sign_label = label_encoder.inverse_transform([predicted.item()])[0]
+                    predicted_label = label_encoder.inverse_transform([predicted.item()])[0]
+                    if max_prob.item() > prob_threshold and predicted_label == "nothing":
+                        sign_label = "nothing"
+                    sign_queue.clear()  # Reset queue when no hand to avoid carryover
 
             # Smooth predictions using a queue
-            sign_queue.append(sign_label)
-            sign_label = max(set(sign_queue), key=sign_queue.count)
+            if sign_label != "None":
+                sign_queue.append(sign_label)
+                sign_label = max(set(sign_queue), key=sign_queue.count)
 
-            # Word and sentence formation logic
-            if sign_label != "None" and sign_label != last_sign:
+            # Stability check for sign acceptance
+            if sign_label == current_sign and sign_label != "None":
+                stable_sign_count += 1
+            else:
+                stable_sign_count = 0
+                current_sign = sign_label
+
+            # Word and sentence formation logic (only update if stable)
+            if stable_sign_count >= stability_threshold and sign_label != last_sign:
                 if sign_label == "space":
                     if word_buffer:
                         sentence.append("".join(word_buffer))
                         word_buffer = []
+                    last_action = "space"
                 elif sign_label == "delete":
                     if word_buffer:
-                        word_buffer.pop()
+                        word_buffer.pop()  # Delete one letter from word_buffer
+                    elif sentence and last_action == "space":  # Undo space by moving last word back as letters
+                        if sentence:
+                            last_word = sentence.pop()
+                            word_buffer = list(last_word)  # Split into individual letters
+                            last_action = None
+                    elif sentence:  # Delete one letter from the last word in sentence
+                        last_word = sentence[-1]
+                        if len(last_word) > 1:
+                            sentence[-1] = last_word[:-1]  # Remove last letter
+                        else:
+                            sentence.pop()  # Remove word if only one letter remains
+                    last_action = "delete"
                 elif sign_label == "nothing":
                     pass
                 else:
                     word_buffer.append(sign_label)
+                    last_action = None
                 last_sign = sign_label
                 sign_duration = 1
             elif sign_label == last_sign:
                 sign_duration += 1
-                if sign_duration > 45:  # Increased for longer hold (~1.5s at 30 FPS)
+                if sign_duration > 60:  # Increased to 60 frames (~2s at 30 FPS)
                     last_sign = None
 
             # Update current text
@@ -202,7 +236,7 @@ def main():
                        cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 255, 0), 2)
 
             # Log detection and rendering details
-            logging.info(f"Frame: {frame_count}, HandsDetected: {hands_detected}, RawPred: {raw_pred}, Sign: {sign_label}, Queue: {list(sign_queue)}, Text: {current_text}, Prob: {max_prob.item():.4f}, Displayed: {last_displayed_text['sign']}")
+            logging.info(f"Frame: {frame_count}, HandsDetected: {hands_detected}, RawPred: {raw_pred}, Sign: {sign_label}, Queue: {list(sign_queue)}, Text: {current_text}, Prob: {max_prob.item():.4f}, Displayed: {last_displayed_text['sign']}, Stable: {stable_sign_count}, LastAction: {last_action}")
 
             # Speak the sentence when complete
             if sentence and not word_buffer and current_text != last_spoken:

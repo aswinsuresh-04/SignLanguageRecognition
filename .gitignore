@@ -1,7 +1,12 @@
 asl_alphabet_train
 asl_alphabet_test
-torch_data\y_data_encoded.pt
-torch_data\x_data_balanced.pt
-torch_data\sign_model.pt
-src\sign_detection.log
-src\landmark_extraction.log
+torch_data/y_data_encoded.pt
+torch_data/x_data_balanced.pt
+torch_data/sign_model.pt
+src/sign_detection.log
+src/landmark_extraction.log
+data/combined_landmarks.csv
+data/landmarks_updated.csv
+data/landmarks.csv
+data/original_landmarks.csv
+src/sign_detection.log
