@@ -1,0 +1,41 @@
+2025-04-26 04:29:44,827 - Emotion: angry, Train images: 3995, Test images: 958
+2025-04-26 04:29:44,828 - Emotion: disgust, Train images: 436, Test images: 111
+2025-04-26 04:29:44,830 - Emotion: fear, Train images: 4097, Test images: 1024
+2025-04-26 04:29:44,833 - Emotion: happy, Train images: 7215, Test images: 1774
+2025-04-26 04:29:44,834 - Emotion: neutral, Train images: 4965, Test images: 1233
+2025-04-26 04:29:44,836 - Emotion: sad, Train images: 4830, Test images: 1247
+2025-04-26 04:29:44,837 - Emotion: surprise, Train images: 3171, Test images: 831
+2025-04-26 04:34:36,364 - You are saving your model as an HDF5 file via `model.save()` or `keras.saving.save_model(model)`. This file format is considered legacy. We recommend using instead the native Keras format, e.g. `model.save('my_model.keras')` or `keras.saving.save_model(model, 'my_model.keras')`. 
+2025-04-26 04:34:36,447 - Model saved to D:\Study\Project\SignLanguageRecognition\torch_data\emotion_model.h5 with final validation accuracy: 0.5492466688156128
+2025-04-26 04:44:57,237 - Emotion: angry, Train images: 3995, Test images: 958
+2025-04-26 04:44:57,237 - Emotion: disgust, Train images: 436, Test images: 111
+2025-04-26 04:44:57,237 - Emotion: fear, Train images: 4097, Test images: 1024
+2025-04-26 04:44:57,237 - Emotion: happy, Train images: 7215, Test images: 1774
+2025-04-26 04:44:57,237 - Emotion: neutral, Train images: 4965, Test images: 1233
+2025-04-26 04:44:57,237 - Emotion: sad, Train images: 4830, Test images: 1247
+2025-04-26 04:44:57,237 - Emotion: surprise, Train images: 3171, Test images: 831
+2025-04-26 04:46:12,023 - Emotion: angry, Train images: 3995, Test images: 958
+2025-04-26 04:46:12,039 - Emotion: disgust, Train images: 436, Test images: 111
+2025-04-26 04:46:12,039 - Emotion: fear, Train images: 4097, Test images: 1024
+2025-04-26 04:46:12,039 - Emotion: happy, Train images: 7215, Test images: 1774
+2025-04-26 04:46:12,039 - Emotion: neutral, Train images: 4965, Test images: 1233
+2025-04-26 04:46:12,039 - Emotion: sad, Train images: 4830, Test images: 1247
+2025-04-26 04:46:12,039 - Emotion: surprise, Train images: 3171, Test images: 831
+2025-04-26 04:46:59,609 - Emotion: angry, Train images: 3995, Test images: 958
+2025-04-26 04:46:59,609 - Emotion: disgust, Train images: 436, Test images: 111
+2025-04-26 04:46:59,609 - Emotion: fear, Train images: 4097, Test images: 1024
+2025-04-26 04:46:59,609 - Emotion: happy, Train images: 7215, Test images: 1774
+2025-04-26 04:46:59,609 - Emotion: neutral, Train images: 4965, Test images: 1233
+2025-04-26 04:46:59,626 - Emotion: sad, Train images: 4830, Test images: 1247
+2025-04-26 04:46:59,629 - Emotion: surprise, Train images: 3171, Test images: 831
+2025-04-26 04:58:28,027 - You are saving your model as an HDF5 file via `model.save()` or `keras.saving.save_model(model)`. This file format is considered legacy. We recommend using instead the native Keras format, e.g. `model.save('my_model.keras')` or `keras.saving.save_model(model, 'my_model.keras')`. 
+2025-04-26 04:58:28,105 - Model saved to D:\Study\Project\SignLanguageRecognition\torch_data\emotion_model.h5 with final validation accuracy: 0.5463917255401611
+2025-04-26 05:05:22,561 - Emotion: angry, Train images: 3995, Test images: 958
+2025-04-26 05:05:22,562 - Emotion: disgust, Train images: 436, Test images: 111
+2025-04-26 05:05:22,563 - Emotion: fear, Train images: 4097, Test images: 1024
+2025-04-26 05:05:22,566 - Emotion: happy, Train images: 7215, Test images: 1774
+2025-04-26 05:05:22,568 - Emotion: neutral, Train images: 4965, Test images: 1233
+2025-04-26 05:05:22,569 - Emotion: sad, Train images: 4830, Test images: 1247
+2025-04-26 05:05:22,570 - Emotion: surprise, Train images: 3171, Test images: 831
+2025-04-26 07:07:18,161 - You are saving your model as an HDF5 file via `model.save()` or `keras.saving.save_model(model)`. This file format is considered legacy. We recommend using instead the native Keras format, e.g. `model.save('my_model.keras')` or `keras.saving.save_model(model, 'my_model.keras')`. 
+2025-04-26 07:07:18,295 - Model saved to D:\Study\Project\SignLanguageRecognition\torch_data\emotion_model.h5 with final validation accuracy: 0.6333240270614624
