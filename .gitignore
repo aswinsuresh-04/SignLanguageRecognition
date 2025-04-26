@@ -10,5 +10,5 @@ data/landmarks_updated.csv
 data/landmarks.csv
 data/original_landmarks.csv
 src/sign_detection.log
-torch_data\emotion_model.h5
-torch_data\emotion_model.pt
+torch_data/emotion_model.h5
+torch_data/emotion_model.pt
