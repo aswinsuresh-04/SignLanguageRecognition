@@ -13,6 +13,7 @@ from sklearn.preprocessing import LabelEncoder
 from transformers import AutoImageProcessor, SiglipForImageClassification
 from PIL import Image
 import time
+import re
 
 # Set up logging
 logging.basicConfig(filename='sign_detection.log', level=logging.INFO, 
@@ -49,9 +50,11 @@ def initialize_tts():
     engine.setProperty('volume', 0.8)
     return engine
 
-def speak_async(text, engine):
+def speak_async(text, engine, speaking_flag):
+    speaking_flag[0] = True  # Mark as speaking
     engine.say(text)
     engine.runAndWait()
+    speaking_flag[0] = False  # Mark as done speaking
 
 def emotion_classification(face_roi):
     """Guess the emotion from a face part of the video."""
@@ -158,9 +161,11 @@ def main():
     skip_frames = 1
     space_count = 0
     last_space_frame = None
-    emotion_history = deque(maxlen=30)  # Dynamic storage for emotions
+    emotion_history = deque(maxlen=15)  # Reduced from 30 to 15 for faster emotion switching
     caption_text = ""  # For displaying the final sentence with emotion
     caption_start_time = None  # To track when the caption was displayed
+    status_message = "Waiting for Signs"  # Status message for top-right corner
+    speaking_flag = [False]  # Flag to track if TTS is speaking
 
     # Main loop to process video
     with tqdm(desc="Processing Frames", unit="frame") as pbar:
@@ -174,30 +179,37 @@ def main():
 
             # Skip some frames to make it faster
             if skip_frames > 1 and frame_count % skip_frames != 0:
+                # Update status message (same as previous frame since we're skipping)
+                if not speaking_flag[0]:  # Only update status if TTS is not speaking
+                    status_message = "Waiting for Signs"
                 cv2.putText(frame, f"Sign: {last_displayed_text['sign']}", (10, 30), 
-                           cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 255, 0), 2)
+                           cv2.FONT_HERSHEY_TRIPLEX, 0.8, (0, 0, 255), 2)  # Changed to red
                 cv2.putText(frame, f"Text: {last_displayed_text['text']}", (10, 60), 
-                           cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 255, 0), 2)
+                           cv2.FONT_HERSHEY_TRIPLEX, 0.8, (0, 0, 255), 2)  # Changed to red
                 cv2.putText(frame, f"Prob: {last_displayed_text['prob']:.4f}", (10, 90), 
-                           cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 255, 0), 2)
+                           cv2.FONT_HERSHEY_TRIPLEX, 0.8, (0, 0, 255), 2)  # Changed to red
                 cv2.putText(frame, f"Space: {space_count}", (10, 120), 
-                           cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 255, 255), 2)
+                           cv2.FONT_HERSHEY_TRIPLEX, 0.8, (0, 0, 255), 2)  # Changed to red
                 cv2.putText(frame, f"Emotion: {get_most_common_emotion(emotion_history)}", (10, 150), 
-                           cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 0, 255), 2)
+                           cv2.FONT_HERSHEY_TRIPLEX, 0.8, (0, 255, 0), 2)  # Changed to green
+                # Display the status message in the top-right corner
+                text_size = cv2.getTextSize(status_message, cv2.FONT_HERSHEY_TRIPLEX, 0.8, 2)[0]
+                text_x = frame.shape[1] - text_size[0] - 10  # 10 pixels from right edge
+                cv2.putText(frame, status_message, (text_x, 30), 
+                           cv2.FONT_HERSHEY_TRIPLEX, 0.8, (255, 0, 0), 2)
                 # Display the caption at the bottom if it exists
-                if caption_text and caption_start_time:
-                    current_time = time.time()
-                    if current_time - caption_start_time < 5:  # Display for 5 seconds
-                        cv2.putText(frame, caption_text, (10, frame.shape[0] - 30), 
-                                   cv2.FONT_HERSHEY_SIMPLEX, 1, (255, 255, 255), 2)
-                    else:
-                        caption_text = ""  # Clear the caption after 5 seconds
-                        caption_start_time = None
+                current_time = time.time()
+                if caption_text and caption_start_time and (current_time - caption_start_time < 5):
+                    cv2.putText(frame, caption_text, (10, frame.shape[0] - 30), 
+                               cv2.FONT_HERSHEY_TRIPLEX, 0.8, (255, 255, 255), 2)
+                else:
+                    caption_text = ""  # Clear the caption after 5 seconds
+                    caption_start_time = None
                 cv2.imshow('Sign Language Detection', frame)
                 pbar.update(1)
                 if cv2.waitKey(1) & 0xFF == ord('q'):
                     break
-                    continue
+                continue
 
             # Detect hands and faces
             frame_rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
@@ -209,6 +221,11 @@ def main():
             raw_pred = -1
             hands_detected = bool(hand_results.multi_hand_landmarks)
             face_detected = bool(face_results.detections)
+
+            # Update status message based on sign detection, but only if TTS is not speaking
+            if not speaking_flag[0]:
+                if hands_detected or sign_label != "None":
+                    status_message = "Showing Signs"
 
             if hands_detected:
                 hand = hand_results.multi_hand_landmarks[0]
@@ -262,6 +279,8 @@ def main():
                         sign_label = "nothing"
                     max_prob = max_prob_tensor.item()  # Convert to float
                 sign_queue.clear()
+                if not speaking_flag[0]:  # Only reset status if TTS is not speaking
+                    status_message = "Waiting for Signs"  # No hands detected, waiting for signs
 
             # Smooth out sign predictions
             if sign_label != "None":
@@ -291,12 +310,16 @@ def main():
                         sentence.append(" ")
                     elif space_count == 2:
                         speak_text = " ".join(sentence).strip()
+                        # Clean up multiple spaces in speak_text
+                        speak_text = re.sub(r'\s+', ' ', speak_text).strip()
                         if speak_text and speak_text != last_spoken:
                             # Determine the most common emotion from the history
                             dominant_emotion = get_most_common_emotion(emotion_history)
                             emotion_phrase = f"with a {dominant_emotion.lower()} face" if dominant_emotion != "None" else "with no emotion"
                             full_speech = f"{speak_text}, {emotion_phrase}"
-                            Thread(target=speak_async, args=(full_speech, tts_engine)).start()
+                            # Start TTS and set status to "Conveying the Message"
+                            Thread(target=speak_async, args=(full_speech, tts_engine, speaking_flag)).start()
+                            status_message = "Conveying the Message"  # Set status when TTS starts
                             last_spoken = speak_text
                             # Set the caption text with the dominant emotion
                             caption_emotion = dominant_emotion.upper() if dominant_emotion != "None" else "NO EMOTION"
@@ -336,6 +359,8 @@ def main():
                     word_buffer = []
                     space_count = 0
                     last_action = "nothing"
+                    if not speaking_flag[0]:  # Only reset status if TTS is done
+                        status_message = "Waiting for Signs"  # Reset status when sentence is cleared
                 else:
                     word_buffer.append(sign_label)
                     space_count = 0
@@ -357,25 +382,30 @@ def main():
 
             # Show everything on the screen
             cv2.putText(frame, f"Sign: {last_displayed_text['sign']}", (10, 30), 
-                       cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 255, 0), 2)
+                       cv2.FONT_HERSHEY_TRIPLEX, 0.8, (0, 0, 255), 2)  # Changed to red
             cv2.putText(frame, f"Text: {last_displayed_text['text']}", (10, 60), 
-                       cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 255, 0), 2)
+                       cv2.FONT_HERSHEY_TRIPLEX, 0.8, (0, 0, 255), 2)  # Changed to red
             cv2.putText(frame, f"Prob: {last_displayed_text['prob']:.4f}", (10, 90), 
-                       cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 255, 0), 2)
+                       cv2.FONT_HERSHEY_TRIPLEX, 0.8, (0, 0, 255), 2)  # Changed to red
             cv2.putText(frame, f"Space: {space_count}", (10, 120), 
-                       cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 255, 255), 2)
+                       cv2.FONT_HERSHEY_TRIPLEX, 0.8, (0, 0, 255), 2)  # Changed to red
             cv2.putText(frame, f"Emotion: {get_most_common_emotion(emotion_history)}", (10, 150), 
-                       cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 0, 255), 2)
+                       cv2.FONT_HERSHEY_TRIPLEX, 0.8, (0, 255, 0), 2)  # Changed to green
+
+            # Display the status message in the top-right corner
+            text_size = cv2.getTextSize(status_message, cv2.FONT_HERSHEY_TRIPLEX, 0.8, 2)[0]
+            text_x = frame.shape[1] - text_size[0] - 10  # 10 pixels from right edge
+            cv2.putText(frame, status_message, (text_x, 30), 
+                       cv2.FONT_HERSHEY_TRIPLEX, 0.8, (255, 0, 0), 2)
 
             # Display the caption at the bottom if it exists
-            if caption_text and caption_start_time:
-                current_time = time.time()
-                if current_time - caption_start_time < 5:  # Display for 5 seconds
-                    cv2.putText(frame, caption_text, (10, frame.shape[0] - 30), 
-                               cv2.FONT_HERSHEY_SIMPLEX, 1, (255, 255, 255), 2)
-                else:
-                    caption_text = ""  # Clear the caption after 5 seconds
-                    caption_start_time = None
+            current_time = time.time()
+            if caption_text and caption_start_time and (current_time - caption_start_time < 5):
+                cv2.putText(frame, caption_text, (10, frame.shape[0] - 30), 
+                           cv2.FONT_HERSHEY_TRIPLEX, 0.8, (255, 255, 255), 2)
+            else:
+                caption_text = ""  # Clear the caption after 5 seconds
+                caption_start_time = None
 
             cv2.imshow('Sign Language Detection', frame)
             pbar.update(1)
